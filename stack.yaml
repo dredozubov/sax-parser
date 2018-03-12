@@ -1,0 +1,7 @@
+resolver: lts-7.24
+packages:
+- .
+- location:
+    git: https://github.com/chrisdone/xeno.git
+    commit: 93725f9a4451ad875e87b40ccab31ad652f9a5b4
+  extra-dep: True
