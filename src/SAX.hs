@@ -1,13 +1,8 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE ViewPatterns #-}
 
 module SAX where
 
@@ -23,11 +18,6 @@ import           Streaming hiding ((<>))
 import qualified Streaming.Prelude as S
 import           Xeno.Types
 
-
-data TagState
-  = Open ByteString
-  | EndOfOpen ByteString
-  deriving (Show, Eq, Ord)
 
 type SaxStream = Stream (Of SaxEvent) (Either XenoException) ()
 
@@ -65,37 +55,52 @@ apm pab pa = do
   ab <- pab
   a <- pa
   return $ ab a
+{-# INLINE apm #-}
 
 instance Applicative SaxParser where
   pure a = SaxParser $ \s _ k -> k s a
+  {-# INLINE pure #-}
+
   (<*>) = apm
+  {-# INLINE (<*>) #-}
+
   f *> k = f >>= const k
+  {-# INLINE (*>) #-}
+
   k <* f = k >>= \a -> f >> pure a
+  {-# INLINE (<*) #-}
 
 instance Semigroup (SaxParser a) where
   SaxParser a <> SaxParser b = SaxParser $ \s fk k ->
     let fk' s' = b s' fk k
     in a s fk' k
+  {-# INLINE (<>) #-}
 
 instance Alternative SaxParser where
   empty = fail "empty alternative"
+  {-# INLINE empty #-}
+
   (<|>) = (<>)
+  {-# INLINE (<|>) #-}
 
 instance Monad SaxParser where
   return = pure
+  {-# INLINE return #-}
+
   SaxParser p >>= k = SaxParser $ \s fk ir ->
     let f s' a = runSaxParser (k a) s' fk ir in p s fk f
+  {-# INLINE (>>=) #-}
+
   (>>) = (*>)
+  {-# INLINE (>>) #-}
 
 instance MonadFail SaxParser where
   fail s = SaxParser $ \_ _ _ -> Fail s
+  {-# INLINE fail #-}
 
 parseSax :: SaxParser a -> SaxStream -> Result a
 parseSax (SaxParser p) s = p s (\_ -> Fail "fail handler") (\_ a -> Done a)
-
--- skipUntil :: SaxParser a -> SaxParser a
--- skipUntil (SaxParser p) = SaxParser $ \as st s k ->
---   Partial _ _ _ _
+{-# INLINE parseSax #-}
 
 skip :: SaxParser ()
 skip = SaxParser $ \s _ k ->
@@ -103,6 +108,7 @@ skip = SaxParser $ \s _ k ->
     Right (Right (event, s')) ->
       trace ("skip event: " ++ show event) $ k s' ()
     _                         -> Fail "skip: stream exhausted"
+{-# INLINE skip #-}
 
 openTag :: ByteString -> SaxParser ()
 openTag tag = SaxParser $ \s fk k ->
@@ -115,6 +121,7 @@ openTag tag = SaxParser $ \s fk k ->
    _                         ->
      trace ("openTag " ++ show tag ++ ": stream exhausted") $
        fk s
+{-# INLINE openTag #-}
 
 endOfOpenTag :: ByteString -> SaxParser ()
 endOfOpenTag tag = SaxParser $ \s fk k ->
@@ -127,6 +134,7 @@ endOfOpenTag tag = SaxParser $ \s fk k ->
    _                         ->
      trace ("endOfOpenTag " ++ show tag ++ ": stream exhausted") $
        fk s
+{-# INLINE endOfOpenTag #-}
 
 text :: SaxParser ByteString
 text = SaxParser $ \s fk k -> case S.next s of
@@ -141,6 +149,7 @@ text = SaxParser $ \s fk k -> case S.next s of
       in k' s' event
   _                         ->
      trace ("text: stream exhausted") $ fk s
+{-# INLINE text #-}
 
 closeTag :: ByteString -> SaxParser ()
 closeTag tag = SaxParser $ \s fk k ->
@@ -151,6 +160,7 @@ closeTag tag = SaxParser $ \s fk k ->
        CloseTag tagN -> if tagN == tag then k s' () else fk s
        _             -> fk s
    _                         -> Fail "stream exhausted"
+{-# INLINE closeTag #-}
 
 withTag :: ByteString -> SaxParser a -> SaxParser a
 withTag tag s = do
@@ -159,31 +169,8 @@ withTag tag s = do
   res <- s
   closeTag tag
   pure res
+{-# INLINE withTag #-}
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skip >> skipUntil s)
-
--- helloParser :: SaxParser Hello
--- helloParser = do
---   withTag "foo" $ do
---     skipUntil $ withTag "hello" $ do
---       hello <- skipUntil $ withTag "inner" text
---       world <- World . concat <$> some (skipUntil $ withTag "world" text)
---       isDom <- (skipUntil $ withTag "is_dom" $ pure True) <|> pure False
---       pure $ Hello hello world isDom
-
--- skipParser :: SaxParser ByteString
--- skipParser = do
---   skipUntil $ withTag "hello" $ text
-
--- data World = World ByteString
---   deriving (Show)
-
--- data Hello = Hello { hHello :: ByteString, hWorld :: World, hIsDom :: Bool }
---   deriving (Show)
-
--- skipXml :: ByteString
--- skipXml = "<?xml version=\"1.1\"?><foo><nope><nooope><hello>Hello</hello></nooope></nope></foo>"
-
--- helloXml :: ByteString
--- helloXml = "<?xml version=\"1.1\"?><foo><nope><nooope><hello><inner>Hello</inner><world> wor</world><world>ld!</world></hello></nooope></nope></foo>"
+{-# INLINE skipUntil #-}
