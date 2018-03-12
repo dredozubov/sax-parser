@@ -3,7 +3,7 @@
 
 name:                sax-parser
 version:             0.1.0.0
-synopsis:            Monadic SAX parser based on xeno xml parsing library
+synopsis:            Monadic streaming parser based on xeno xml parsing library
 -- description:
 license:             BSD3
 license-file:        LICENSE
