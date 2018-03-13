@@ -227,6 +227,9 @@ withTag tag s = do
   pure res
 {-# INLINE withTag #-}
 
+withTag' :: ByteString -> SaxParser a -> SaxParser a
+withTag' t p = skipUntil (withTag t p)
+
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
 {-# INLINE skipUntil #-}
