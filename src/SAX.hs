@@ -229,6 +229,7 @@ withTag tag s = do
 
 withTag' :: ByteString -> SaxParser a -> SaxParser a
 withTag' t p = skipUntil (withTag t p)
+{-# INLINE withTag' #-}
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
