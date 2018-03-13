@@ -4,14 +4,30 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module SAX where
+module SAX
+  ( SaxStream
+  , Result(..)
+  , SaxParser(..)
+  , parseSax
+  , skipXml
+  , skipParser
+  , helloXml
+  , helloParser
+  , Hello(..)
+  , skip
+  , openTag
+  , endOfOpenTag
+  , text
+  , closeTag
+  , streamXml
+  ) where
 
 
 import           Control.Applicative
 import           Control.Monad.Fail
 import           Data.ByteString hiding (empty)
 import           Data.Semigroup hiding (Any)
-import           Debug.Trace
+import           Debug.Tracy
 import           Prelude hiding (fail, concat)
 import           SAX.Streaming
 import           Streaming hiding ((<>))
@@ -22,10 +38,10 @@ import           Xeno.Types
 type SaxStream = Stream (Of SaxEvent) (Either XenoException) ()
 
 data Result r
-  = Partial (SaxEvent -> (Result r)) SaxStream
-  -- ^ Supply this continuation with more input so that the parser
-  -- can resume.  To indicate that no more input is available, pass
-  -- an empty string to the continuation.
+  = Partial (SaxEvent -> (Result r)) [ByteString] SaxStream
+  -- ^ Partial result contains a continuation, a list of tags that parser will
+  -- skip automatically because `skipUntil` family of combinators were used before
+  -- and the rest of the stream to consume
   | Done r
   -- ^ The parse succeeded.  The @i@ parameter is the input that had
   -- not yet been consumed (if any) when the parse succeeded.
@@ -35,20 +51,21 @@ data Result r
 
 instance Show r => Show (Result r) where
   show (Fail s) = "Fail \"" ++ s ++ "\""
-  show (Partial _ _) = "Partial { <...> }"
+  show (Partial _ _ _) = "Partial { <...> }"
   show (Done r) = "Done " ++ show r
 
 newtype SaxParser a = SaxParser
   { runSaxParser :: forall r
-    . SaxStream
-    -> (SaxStream -> Result r)
-    -> (SaxStream -> a -> Result r)
+    . [ByteString]
+    -> SaxStream
+    -> ([ByteString] -> SaxStream -> Result r)
+    -> ([ByteString] -> SaxStream -> a -> Result r)
     -> Result r
   }
 
 instance Functor SaxParser where
-  fmap f (SaxParser p) = SaxParser $ \s fk k ->
-    let k' s' a = k s' (f a) in p s fk k'
+  fmap f (SaxParser p) = SaxParser $ \tst s fk k ->
+    let k' tst' s' a = k tst' s' (f a) in p tst s fk k'
 
 apm :: SaxParser (a -> b) -> SaxParser a -> SaxParser b
 apm pab pa = do
@@ -58,7 +75,7 @@ apm pab pa = do
 {-# INLINE apm #-}
 
 instance Applicative SaxParser where
-  pure a = SaxParser $ \s _ k -> k s a
+  pure a = SaxParser $ \tst s _ k -> k tst s a
   {-# INLINE pure #-}
 
   (<*>) = apm
@@ -71,9 +88,9 @@ instance Applicative SaxParser where
   {-# INLINE (<*) #-}
 
 instance Semigroup (SaxParser a) where
-  SaxParser a <> SaxParser b = SaxParser $ \s fk k ->
-    let fk' s' = b s' fk k
-    in a s fk' k
+  SaxParser a <> SaxParser b = SaxParser $ \tst s fk k ->
+    let fk' tst' s' = b tst' s' fk k
+    in a tst s fk' k
   {-# INLINE (<>) #-}
 
 instance Alternative SaxParser where
@@ -87,79 +104,118 @@ instance Monad SaxParser where
   return = pure
   {-# INLINE return #-}
 
-  SaxParser p >>= k = SaxParser $ \s fk ir ->
-    let f s' a = runSaxParser (k a) s' fk ir in p s fk f
+  SaxParser p >>= k = SaxParser $ \tst s fk ir ->
+    let f tst' s' a = runSaxParser (k a) tst' s' fk ir in p tst s fk f
   {-# INLINE (>>=) #-}
 
   (>>) = (*>)
   {-# INLINE (>>) #-}
 
 instance MonadFail SaxParser where
-  fail s = SaxParser $ \_ _ _ -> Fail s
+  fail s = SaxParser $ \_ _ _ _ -> Fail s
   {-# INLINE fail #-}
 
 parseSax :: SaxParser a -> SaxStream -> Result a
-parseSax (SaxParser p) s = p s (\_ -> Fail "fail handler") (\_ a -> Done a)
+parseSax (SaxParser p) s = p [] s (\_ _ -> Fail "fail handler") (\_ _ a -> Done a)
 {-# INLINE parseSax #-}
 
+safeHead :: [a] -> Maybe (a, [a])
+safeHead [] = Nothing
+safeHead (a:as) = Just (a, as)
+{-# INLINE safeHead #-}
+
 skip :: SaxParser ()
-skip = SaxParser $ \s _ k ->
+skip = SaxParser $ \tst s _ k ->
   case S.next s of
-    Right (Right (event, s')) ->
-      trace ("skip event: " ++ show event) $ k s' ()
-    _                         -> Fail "skip: stream exhausted"
+    Right (Right (_, s')) -> k tst s' ()
+    _                       -> Fail "skip: stream exhausted"
 {-# INLINE skip #-}
 
-openTag :: ByteString -> SaxParser ()
-openTag tag = SaxParser $ \s fk k ->
+-- skipAttributes :: SaxParser ()
+-- skipAttributes = SaxParser $ \tst s _ k ->
+--   case S.next s of
+--     Right (Right (event, s')) ->
+--       case event of
+--         Attr _ _ -> k tst s' ()
+--         _        ->
+
+skipAndMark :: SaxParser ()
+skipAndMark = SaxParser $ \tst s _ k ->
   case S.next s of
-   Right (Right (event, s')) ->
-     trace ("openTag event: " ++ show event) $
-     case event of
-       OpenTag tagN -> if tagN == tag then k s' () else fk s
-       _            -> fk s
-   _                         ->
-     trace ("openTag " ++ show tag ++ ": stream exhausted") $
-       fk s
+    Right (Right (event, s')) ->
+      tracy ("skipAndMark event: " ++ show event) $
+      case event of
+        EndOfOpenTag tag ->
+          tracy ("adding to the skip stack: " ++ show tag) $
+          k (tag:tst) s' ()
+        _                -> k tst s' ()
+    _                         -> Fail "skip: stream exhausted"
+{-# INLINE skipAndMark #-}
+
+openTag :: ByteString -> SaxParser ()
+openTag tag = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, s')) ->
+      tracy ("openTag " ++ show tag ++ " event: " ++ show event) $
+      case event of
+        OpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
+        e            -> case safeHead tst of
+          Nothing -> fk tst s
+          Just (tagS,rest) -> if e == CloseTag tagS
+            then k rest s' ()
+            else fk tst s
+    Right (Left e)            -> Fail (show e)
+    Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE openTag #-}
 
 endOfOpenTag :: ByteString -> SaxParser ()
-endOfOpenTag tag = SaxParser $ \s fk k ->
+endOfOpenTag tag = SaxParser $ \tst s fk k ->
   case S.next s of
    Right (Right (event, s')) ->
-     trace ("endOfOpenTag " ++ show tag ++ " event: " ++ show event) $
+     tracy ("endOfOpenTag " ++ show tag ++ " event: " ++ show event) $
      case event of
-       EndOfOpenTag tagN -> if tagN == tag then k s' () else fk s
-       _                 -> fk s
-   _                         ->
-     trace ("endOfOpenTag " ++ show tag ++ ": stream exhausted") $
-       fk s
+       EndOfOpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
+       e            -> case safeHead tst of
+         Nothing -> fk tst s
+         Just (tagS,rest) -> if e == CloseTag tagS
+           then k rest s' ()
+           else Fail $ "expected end of opening of " ++ show tag ++ ", got "
+             ++ show event ++ " instead"
+   Right (Left e)            -> Fail (show e)
+   Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE endOfOpenTag #-}
 
 text :: SaxParser ByteString
-text = SaxParser $ \s fk k -> case S.next s of
+text = SaxParser $ \tst s fk k -> case S.next s of
   Right (Right (event, s')) ->
-    trace ("text event: " ++ show event) $
-    -- trace ("stream state: " ++ show s') $
+    tracy ("text event: " ++ show event) $
+    tracy ("tst: " ++ show tst) $
       let
-        k' s'' e = case e of
-          Text textVal -> k s'' textVal
-          _            -> Fail $ "expected a text value, got "
-            ++ show e ++ " instead"
-      in k' s' event
-  _                         ->
-     trace ("text: stream exhausted") $ fk s
+        k' tst' s'' a = case event of
+          Text textVal -> k tst' s'' textVal
+          e            -> case safeHead tst of
+            Nothing -> fk tst s
+            Just (tagS,rest) -> if e == CloseTag tagS
+              then k rest s' a
+              else fk tst s'
+      in k' tst s' ""
+  Right (Left e)            -> Fail (show e)
+  Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE text #-}
 
 closeTag :: ByteString -> SaxParser ()
-closeTag tag = SaxParser $ \s fk k ->
+closeTag tag = SaxParser $ \tst s fk k ->
   case S.next s of
    Right (Right (event, s')) ->
-     trace ("closeTag event: " ++ show event) $
+     tracy ("closeTag " ++ show tag ++ " event: " ++ show event) $
      case event of
-       CloseTag tagN -> if tagN == tag then k s' () else fk s
-       _             -> fk s
-   _                         -> Fail "stream exhausted"
+       CloseTag tagN -> tracy "close1" $ if tagN == tag then k tst s' ()
+         else case safeHead tst of
+           Nothing -> fk tst s
+           Just (tagS,rest) -> if tagS == tagN then k rest s' () else k tst s' ()
+       e             -> fk tst s'
+   Right (Left e)            -> Fail (show e)
+   Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE closeTag #-}
 
 withTag :: ByteString -> SaxParser a -> SaxParser a
@@ -172,5 +228,28 @@ withTag tag s = do
 {-# INLINE withTag #-}
 
 skipUntil :: SaxParser a -> SaxParser a
-skipUntil s = s <|> (skip >> skipUntil s)
+skipUntil s = s <|> (skipAndMark >> skipUntil s)
 {-# INLINE skipUntil #-}
+
+-- tests
+helloParser :: SaxParser Hello
+helloParser = do
+  skipUntil $ withTag "foo" $ do
+    skipUntil $ withTag "hello" $ do
+      hello <- withTag "inner" text
+      world <- World . concat <$> some (withTag "world" text)
+      isDom <- (withTag "is_dom" $ pure True) <|> pure False
+      pure $ Hello hello world isDom
+
+skipParser :: SaxParser ByteString
+skipParser = do
+  skipUntil $ withTag "hello" $ text
+
+newtype World = World ByteString deriving (Show)
+data Hello = Hello { hHello :: ByteString, hWorld :: World, hIsDom :: Bool } deriving (Show)
+
+skipXml :: ByteString
+skipXml = "<?xml version=\"1.1\"?><foo><nope><nooope><hello>Hello</hello></nooope></nope></foo>"
+
+helloXml :: ByteString
+helloXml = "<?xml version=\"1.1\"?><f><foo><bar><hello><inner>Hello</inner><world> wor</world><world>ld!</world></hello></bar></foo></f>"
