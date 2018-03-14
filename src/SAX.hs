@@ -9,16 +9,15 @@ module SAX
   , Result(..)
   , SaxParser(..)
   , parseSax
-  , skipXml
-  , skipParser
-  , helloXml
-  , helloParser
-  , Hello(..)
   , skip
+  , skipAndMark
   , openTag
   , endOfOpenTag
   , text
   , closeTag
+  , skipUntil
+  , withTag
+  , withTag'
   , streamXml
   ) where
 
@@ -213,7 +212,7 @@ closeTag tag = SaxParser $ \tst s fk k ->
          else case safeHead tst of
            Nothing -> fk tst s
            Just (tagS,rest) -> if tagS == tagN then k rest s' () else k tst s' ()
-       e             -> fk tst s'
+       _             -> fk tst s'
    Right (Left e)            -> Fail (show e)
    Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE closeTag #-}
@@ -234,26 +233,3 @@ withTag' t p = skipUntil (withTag t p)
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
 {-# INLINE skipUntil #-}
-
--- tests
-helloParser :: SaxParser Hello
-helloParser = do
-  skipUntil $ withTag "foo" $ do
-    skipUntil $ withTag "hello" $ do
-      hello <- withTag "inner" text
-      world <- World . concat <$> some (withTag "world" text)
-      isDom <- (withTag "is_dom" $ pure True) <|> pure False
-      pure $ Hello hello world isDom
-
-skipParser :: SaxParser ByteString
-skipParser = do
-  skipUntil $ withTag "hello" $ text
-
-newtype World = World ByteString deriving (Show)
-data Hello = Hello { hHello :: ByteString, hWorld :: World, hIsDom :: Bool } deriving (Show)
-
-skipXml :: ByteString
-skipXml = "<?xml version=\"1.1\"?><foo><nope><nooope><hello>Hello</hello></nooope></nope></foo>"
-
-helloXml :: ByteString
-helloXml = "<?xml version=\"1.1\"?><f><foo><bar><hello><inner>Hello</inner><world> wor</world><world>ld!</world></hello></bar></foo></f>"
