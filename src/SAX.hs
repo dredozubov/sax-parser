@@ -17,6 +17,7 @@ module SAX
   , closeTag
   , skipUntil
   , withTag
+  , skipTag
   , atTag
   , streamXml
   ) where
@@ -228,6 +229,13 @@ withTag tag s = do
 atTag :: ByteString -> SaxParser a -> SaxParser a
 atTag t p = skipUntil (withTag t p)
 {-# INLINE atTag #-}
+
+skipTag :: ByteString -> SaxParser ()
+skipTag tag = do
+  openTag tag
+  skipUntil (endOfOpenTag tag)
+  skipUntil (closeTag tag)
+  pure ()
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
