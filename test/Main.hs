@@ -18,8 +18,8 @@ helloParser :: SaxParser Hello
 helloParser = do
   withTag' "foo" $ do
     withTag' "hello" $ do
-      hello <- withTag "inner" text
-      world <- World . BS.concat <$> some (withTag "world" text)
+      hello <- withTag "inner" bytes
+      world <- World . BS.concat <$> some (withTag "world" bytes)
       isDom <- (withTag "is_dom" $ pure True) <|> pure False
       pure $ Hello hello world isDom
 

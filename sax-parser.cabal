@@ -26,6 +26,7 @@ library
                      , mtl
                      , streaming
                      , tracy
+                     , text
                      , xeno
   hs-source-dirs:      src
   ghc-options:         -Wall

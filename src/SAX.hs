@@ -13,7 +13,7 @@ module SAX
   , skipAndMark
   , openTag
   , endOfOpenTag
-  , text
+  , bytes
   , closeTag
   , skipUntil
   , withTag
@@ -184,8 +184,8 @@ endOfOpenTag tag = SaxParser $ \tst s fk k ->
    Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE endOfOpenTag #-}
 
-text :: SaxParser ByteString
-text = SaxParser $ \tst s fk k -> case S.next s of
+bytes :: SaxParser ByteString
+bytes = SaxParser $ \tst s fk k -> case S.next s of
   Right (Right (event, s')) ->
     tracy ("text event: " ++ show event) $
     tracy ("tst: " ++ show tst) $
@@ -200,7 +200,7 @@ text = SaxParser $ \tst s fk k -> case S.next s of
       in k' tst s' ""
   Right (Left e)            -> Fail (show e)
   Left _                    -> Fail "SAX stream exhausted"
-{-# INLINE text #-}
+{-# INLINE bytes #-}
 
 closeTag :: ByteString -> SaxParser ()
 closeTag tag = SaxParser $ \tst s fk k ->
