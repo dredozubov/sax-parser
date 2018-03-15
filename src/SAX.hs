@@ -17,7 +17,7 @@ module SAX
   , closeTag
   , skipUntil
   , withTag
-  , withTag'
+  , atTag
   , streamXml
   ) where
 
@@ -178,8 +178,7 @@ endOfOpenTag tag = SaxParser $ \tst s fk k ->
          Nothing -> fk tst s
          Just (tagS,rest) -> if e == CloseTag tagS
            then k rest s' ()
-           else Fail $ "expected end of opening of " ++ show tag ++ ", got "
-             ++ show event ++ " instead"
+           else fk tst s
    Right (Left e)            -> Fail (show e)
    Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE endOfOpenTag #-}
@@ -220,15 +219,15 @@ closeTag tag = SaxParser $ \tst s fk k ->
 withTag :: ByteString -> SaxParser a -> SaxParser a
 withTag tag s = do
   openTag tag
-  endOfOpenTag tag
+  skipUntil (endOfOpenTag tag)
   res <- s
   closeTag tag
   pure res
 {-# INLINE withTag #-}
 
-withTag' :: ByteString -> SaxParser a -> SaxParser a
-withTag' t p = skipUntil (withTag t p)
-{-# INLINE withTag' #-}
+atTag :: ByteString -> SaxParser a -> SaxParser a
+atTag t p = skipUntil (withTag t p)
+{-# INLINE atTag #-}
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)

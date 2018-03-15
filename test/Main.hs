@@ -12,12 +12,12 @@ newtype World = World ByteString deriving (Show, Eq)
 data Hello = Hello { hHello :: ByteString, hWorld :: World, hIsDom :: Bool } deriving (Show, Eq)
 
 helloXml :: ByteString
-helloXml = "<?xml version=\"1.1\"?><f><foo><bar><hello><inner>Hello</inner><world> wor</world><world>ld!</world></hello></bar></foo></f>"
+helloXml = "<?xml version=\"1.1\"?><f><foo bla=\"alb\"><bar><hello><inner>Hello</inner><world> wor</world><world>ld!</world></hello></bar></foo></f>"
 
 helloParser :: SaxParser Hello
 helloParser = do
-  withTag' "foo" $ do
-    withTag' "hello" $ do
+  atTag "foo" $ do
+    atTag "hello" $ do
       hello <- withTag "inner" bytes
       world <- World . BS.concat <$> some (withTag "world" bytes)
       isDom <- (withTag "is_dom" $ pure True) <|> pure False
