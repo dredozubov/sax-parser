@@ -127,7 +127,7 @@ safeHead (a:as) = Just (a, as)
 skip :: SaxParser ()
 skip = SaxParser $ \tst s _ k ->
   case S.next s of
-    Right (Right (_, s')) -> k tst s' ()
+    Right (Right (e, s')) -> tracy ("skipping event: " ++ show e) $ k tst s' ()
     _                       -> Fail "skip: stream exhausted"
 {-# INLINE skip #-}
 
@@ -196,47 +196,61 @@ bytes = SaxParser $ \tst s fk k -> case S.next s of
             Nothing -> fk tst s
             Just (tagS,rest) -> if e == CloseTag tagS
               then k rest s' a
-              else fk tst s'
+              else fk tst s
       in k' tst s' ""
   Right (Left e)            -> Fail (show e)
   Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE bytes #-}
 
 closeTag :: ByteString -> SaxParser ()
-closeTag tag = SaxParser $ \tst s fk k ->
+closeTag tag = tracy ("running closeTag: " ++ show tag) $ SaxParser $ \tst s fk k ->
   case S.next s of
-   Right (Right (event, s')) ->
-     tracy ("closeTag " ++ show tag ++ " event: " ++ show event) $
-     case event of
-       CloseTag tagN -> tracy "close1" $ if tagN == tag then k tst s' ()
-         else case safeHead tst of
-           Nothing -> fk tst s
-           Just (tagS,rest) -> if tagS == tagN then k rest s' () else k tst s' ()
-       _             -> fk tst s'
-   Right (Left e)            -> Fail (show e)
-   Left _                    -> Fail "SAX stream exhausted"
+    Right (Right (event, s')) ->
+      tracy ("closeTag " ++ show tag ++ " event: " ++ show event) $
+      case event of
+        CloseTag tagN -> tracy "close1" $ if tagN == tag
+          then tracy "tagN == tag" $ k tst s' ()
+          else tracy "else" $ case safeHead tst of
+            Nothing          -> tracy "Nothing" $ fk tst s
+            Just (tagS,rest) -> tracy ("Just: " ++ show tst) $
+              if tagS == tagN
+              then tracy "tag == tagN" $ k rest s' ()
+              else tracy "tag != tagN" $ fk tst s
+        _             -> fk tst s
+    Right (Left e)            -> tracy ("rightleft: " ++ show e) $ Fail (show e)
+    Left e                    -> tracy ("failing with: " ++ show e) $ Fail "SAX stream exhausted"
 {-# INLINE closeTag #-}
 
 withTag :: ByteString -> SaxParser a -> SaxParser a
 withTag tag s = do
   openTag tag
-  skipUntil (endOfOpenTag tag)
+  skipUntil' (endOfOpenTag tag)
   res <- s
   closeTag tag
   pure res
 {-# INLINE withTag #-}
 
 atTag :: ByteString -> SaxParser a -> SaxParser a
-atTag t p = skipUntil (withTag t p)
+atTag tag p = do
+  skipUntil (openTag tag)
+  skipUntil' (endOfOpenTag tag)
+  res <- p
+  skipUntil' (closeTag tag)
+  pure res
 {-# INLINE atTag #-}
 
 skipTag :: ByteString -> SaxParser ()
 skipTag tag = do
   openTag tag
-  skipUntil (endOfOpenTag tag)
-  skipUntil (closeTag tag)
+  skipUntil' (endOfOpenTag tag)
+  skipUntil' (closeTag tag)
   pure ()
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
 {-# INLINE skipUntil #-}
+
+-- | A version of @skipUntil@ without @skipAndMark@.
+skipUntil' :: SaxParser a -> SaxParser a
+skipUntil' s = s <|> (skip >> skipUntil' s)
+{-# INLINE skipUntil' #-}
