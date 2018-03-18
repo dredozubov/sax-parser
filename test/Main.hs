@@ -27,7 +27,7 @@ helloParser = do
       skipTag "skipMe"
       world <- World . BS.concat <$> some (withTag "world" bytes)
       isDom <- (withTag "is_dom" $ pure True) <|> pure False
-      ne <- many (withTag "fish" bytes) <|> pure []
+      ne <- many (withTag "fish" bytes)
       pure $ Hello hello world isDom ne
 
 main :: IO ()
