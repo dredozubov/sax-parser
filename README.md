@@ -1,2 +1,2 @@
 # sax-parser 🎷
-Fast monadic streaming XML parser
+Fast monadic streaming XML parser.

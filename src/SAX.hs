@@ -40,8 +40,8 @@ type SaxStream = Stream (Of SaxEvent) (Either XenoException) ()
 data Result r
   = Partial (SaxEvent -> (Result r)) [ByteString] SaxStream
   -- ^ Partial result contains a continuation, a list of tags that parser will
-  -- skip automatically because `skipUntil` family of combinators were used before
-  -- and the rest of the stream to consume
+  -- skip automatically(if parsers from `skipUntil` family of combinators were used before)
+  -- the rest of the stream to consume
   | Done r
   -- ^ The parse succeeded.  The @i@ parameter is the input that had
   -- not yet been consumed (if any) when the parse succeeded.
@@ -133,14 +133,6 @@ skip = SaxParser $ \tst s _ k ->
     _                       -> Fail "skip: stream exhausted"
 {-# INLINE skip #-}
 
--- skipAttributes :: SaxParser ()
--- skipAttributes = SaxParser $ \tst s _ k ->
---   case S.next s of
---     Right (Right (event, s')) ->
---       case event of
---         Attr _ _ -> k tst s' ()
---         _        ->
-
 skipAndMark :: SaxParser ()
 skipAndMark = SaxParser $ \tst s _ k ->
   case S.next s of
@@ -177,8 +169,10 @@ endOfOpenTag tag = SaxParser $ \tst s fk k ->
      tracy ("endOfOpenTag " ++ show tag ++ " event: " ++ show event) $
      case event of
        EndOfOpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
-       e            -> case safeHead tst of
-         Nothing -> fk tst s
+       e                 -> case safeHead tst of
+         Nothing          ->
+           Fail $ "expected an ending of tag opening of "
+           ++ show tag ++ ", got " ++ show event ++ " instead"
          Just (tagS,rest) -> if e == CloseTag tagS
            then k rest s' ()
            else fk tst s
@@ -198,7 +192,9 @@ bytes = SaxParser $ \tst s fk k -> case S.next s of
             Nothing -> fk tst s
             Just (tagS,rest) -> if e == CloseTag tagS
               then k rest s' a
-              else fk tst s
+              else Fail $ "expected text value, got "
+                ++ show event
+                ++ " instead"
       in k' tst s' ""
   Right (Left e)            -> Fail (show e)
   Left _                    -> Fail "SAX stream exhausted"
@@ -222,18 +218,17 @@ closeTag tag =
             tracy "else" $
             case safeHead tst of
               Nothing          ->
-                tracy "Nothing" $
-                fk tst s
+                Fail $ "expected a closing of tag "
+                ++ show tag ++ ", got " ++ show event
+                ++ " instead"
               Just (tagS,rest) ->
-                tracy ("Just: " ++ show tst) $
                 if tagS == tagN
                 then
-                  tracy "tag == tagN" $
                   k rest s' ()
                 else
-                  tracy "tag != tagN" $
                   fk tst s
-        _             -> fk tst s
+        _             ->
+                  fk tst s
     Right (Left e)            ->
       tracy ("rightleft: " ++ show e) $
       Fail (show e)
@@ -263,7 +258,6 @@ atTag tag p = do
 skipTag :: ByteString -> SaxParser ()
 skipTag tag = do
   openTag tag
-  skipUntil' (endOfOpenTag tag)
   skipUntil' (closeTag tag)
   pure ()
 
