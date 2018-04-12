@@ -119,6 +119,15 @@ parseSax :: SaxParser a -> SaxStream -> Result a
 parseSax (SaxParser p) s = p [] s (\_ _ -> Fail "fail handler") (\_ _ a -> Done a)
 {-# INLINE parseSax #-}
 
+-- | Shows current @SaxEvent@.
+peek :: SaxParser SaxEvent
+peek = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, _)) -> k tst s event
+    Right (Left e)           -> Fail "peek: empty sax stream"
+    Left _                   -> Fail "SAX stream exhausted"
+{-# INLINE peek #-}
+
 safeHead :: [a] -> Maybe (a, [a])
 safeHead [] = Nothing
 safeHead (a:as) = Just (a, as)
