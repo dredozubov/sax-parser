@@ -25,7 +25,6 @@ library
                      , bytestring
                      , mtl
                      , streaming
-                     , tracy
                      , text
                      , xeno
   hs-source-dirs:      src
