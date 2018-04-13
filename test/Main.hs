@@ -53,8 +53,10 @@ atTagXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<b>b</b>", atTag "b" bytes, R (Done "b"))
   , ("<a><b>b</b></a>", atTag "a" $ atTag "b" bytes, R (Done "b"))
   , ("<a><c cattr=\"c\">c</c><b>b</b></a>", atTag "a" $ atTag "b" bytes, R (Done "b"))
-  , ("<a></a>", atTag "b" bytes, R (Fail "no tag b found"))
-  , ("<a><c cattr=\"c\">c</c></a><b>b</b><c>true</c>", atTag "a" $ atTag "b" bytes, R (Done "true"))
+  , ("<a></a>", atTag "b" bytes, R (Fail "()"))
+  , ("<a><a></a></a><b>b</b>", atTag "b" bytes, R (Done "b"))
+  , ("<a><c cattr=\"c\">c</c></a><b>b</b><c>true</c>", atTag "a" $ atTag "c" bytes, R (Done "c"))
+  , ("<a><c cattr=\"c\">c</c></a><b>b</b><c>true</c>", atTag "c" bytes, R (Done "true"))
   ]
 
 main :: IO ()
