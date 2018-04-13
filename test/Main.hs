@@ -27,7 +27,7 @@ instance Eq r => Eq (R r) where
   _            == _            = False
 
 helloXml :: ByteString
-helloXml = "<?xml version=\"1.1\"?><f><foo bla=\"alb\"><bar><hello><inner>Hello</inner><skipMe><meToo>and Me</meToo></skipMe><world> wor</world><world>ld!</world></hello></bar></foo><quuz>ok</quuz></f>"
+helloXml = "<?xml version=\"1.1\"?><f><foo bla=\"alb\"><bar><hello><inner>Hello</inner><skipMe><meToo>and Me</meToo></skipMe><world> wor</world><world>ld!</world></hello></bar></foo></f>"
 
 helloParser :: SaxParser Hello
 helloParser = do
