@@ -172,6 +172,18 @@ openTag tag = SaxParser $ \tst s fk k ->
     Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE openTag #-}
 
+openAndMark :: SaxParser ByteString
+openAndMark = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, s')) ->
+      case event of
+        OpenTag tagN -> tracy ("openAndMark: adding " <> show tagN) $
+          k (tagN:tst) s' tagN
+        _            -> fk tst s
+    Right (Left e)            -> Fail (show e)
+    Left _                    -> Fail "SAX stream exhausted"
+{-# INLINE openAndMark #-}
+
 endOfOpenTag :: ByteString -> SaxParser ()
 endOfOpenTag tag = SaxParser $ \tst s fk k ->
   case S.next s of
@@ -268,11 +280,11 @@ withTagAndAttrs tag sattrs sa = do
 
 atTag :: ByteString -> SaxParser a -> SaxParser a
 atTag tag p = do
-  skipUntil (openTag tag)
-  skipUntil' (endOfOpenTag tag)
-  res <- p
-  skipUntil' (closeTag tag)
-  pure res
+  withTag tag p <|> (do
+    t <- openAndMark
+    skipUntil' (closeTag t)
+    atTag tag p
+    )
 {-# INLINE atTag #-}
 
 -- | Skips a tag and all of its children.
