@@ -17,6 +17,7 @@ module SAX
   , closeTag
   , skipUntil
   , withTag
+  , withTagAndAttrs
   , skipTag
   , atTag
   , streamXml
@@ -179,9 +180,7 @@ endOfOpenTag tag = SaxParser $ \tst s fk k ->
      case event of
        EndOfOpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
        e                 -> case safeHead tst of
-         Nothing          ->
-           Fail $ "expected an ending of tag opening of "
-           ++ show tag ++ ", got " ++ show event ++ " instead"
+         Nothing          -> fk tst s
          Just (tagS,rest) -> if e == CloseTag tagS
            then k rest s' ()
            else fk tst s
@@ -226,10 +225,7 @@ closeTag tag =
           else
             tracy "else" $
             case safeHead tst of
-              Nothing          ->
-                Fail $ "expected a closing of tag "
-                ++ show tag ++ ", got " ++ show event
-                ++ " instead"
+              Nothing          -> fk tst s
               Just (tagS,rest) ->
                 if tagS == tagN
                 then
@@ -246,6 +242,7 @@ closeTag tag =
       Fail "SAX stream exhausted"
 {-# INLINE closeTag #-}
 
+-- | Parses tag with its content, skipping the attributes.
 withTag :: ByteString -> SaxParser a -> SaxParser a
 withTag tag s = do
   openTag tag
@@ -254,6 +251,20 @@ withTag tag s = do
   closeTag tag
   pure res
 {-# INLINE withTag #-}
+
+withTagAndAttrs
+  :: ByteString
+  -> SaxParser attrs
+  -> SaxParser a
+  -> SaxParser (attrs, a)
+withTagAndAttrs tag sattrs sa = do
+  openTag tag
+  attrs <- sattrs
+  endOfOpenTag tag
+  res <- sa
+  closeTag tag
+  pure (attrs, res)
+{-# INLINE withTagAndAttrs #-}
 
 atTag :: ByteString -> SaxParser a -> SaxParser a
 atTag tag p = do
@@ -264,11 +275,13 @@ atTag tag p = do
   pure res
 {-# INLINE atTag #-}
 
+-- | Skips a tag and all of its children.
 skipTag :: ByteString -> SaxParser ()
 skipTag tag = do
   openTag tag
   skipUntil' (closeTag tag)
   pure ()
+{-# INLINE skipTag #-}
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
