@@ -1,4 +1,4 @@
-# sax
+# sax 🎷
 Fast monadic streaming XML parser.
 
 It feels and looks like any other parser combinators library.

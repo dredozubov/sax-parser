@@ -3,13 +3,16 @@
 
 name:                sax
 version:             0.1.0.0
-synopsis:            Monadic streaming parser based on xeno xml parsing library
--- description:
+synopsis:            Monadic streaming XML parser
+description:         Fast monadic streaming XML parser. 🎷
+
+                     It feels and looks like any other parser combinators library.
 license:             BSD3
 license-file:        LICENSE
 author:              Denis Redozubov
 maintainer:          denis.redozubov@gmail.com
--- copyright:
+-- copyright
+homepage:            https://github.com/dredozubov/sax-parser
 category:            Text
 build-type:          Simple
 extra-source-files:  ChangeLog.md
