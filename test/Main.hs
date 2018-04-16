@@ -3,7 +3,7 @@
 
 module Main where
 
-import Control.Applicative
+import Control.Applicative as A
 import Data.ByteString as BS
 import Data.Foldable
 import Data.Monoid
@@ -48,6 +48,21 @@ skipTagXmls = fmap (\(x,p) -> ("<?xml version=\"1.1\"?>" <> x, p))
   , ("<a><nested></nested></a><b>b</b>", skipTag "a" >> withTag "b" bytes)
   ]
 
+attrXmls :: [(ByteString, SaxParser ByteString, R ByteString)]
+attrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
+  [ ("<a b=\"b\"> </a>", withAttrs "a" (attr "b"), R $ Done "b")
+  ]
+
+skipAttrXmls :: [(ByteString, SaxParser (), R ())]
+skipAttrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
+  [ ("<a b=\"b\" c=\"c\"></a>", withAttrs "a" (many skipAttr *> pure ()), R $ Done ())
+  ]
+
+anyAttrXmls :: [(ByteString, SaxParser [(ByteString, ByteString)], R [(ByteString, ByteString)])]
+anyAttrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
+  [ ("<a b=\"b\" c=\"c\"></a>", withAttrs "a" (some anyAttr), R (Done [("b","b"), ("c", "c")]))
+  ]
+
 atTagXmls :: [(ByteString, SaxParser ByteString, R ByteString)]
 atTagXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<b>b</b>", atTag "b" bytes, R (Done "b"))
@@ -76,5 +91,20 @@ main = hspec $ do
 
     describe "atTag" $ do
       for_ atTagXmls $ \(xml, parser, result) ->
+        it (" parses " ++ show xml) $ do
+          parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
+
+    describe "attr" $ do
+      for_ attrXmls $ \(xml, parser, result) ->
+        it (" parses " ++ show xml) $ do
+          parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
+
+    describe "anyAttr" $ do
+      for_ anyAttrXmls $ \(xml, parser, result) ->
+        it (" parses " ++ show xml) $ do
+          parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
+
+    describe "skipAttr" $ do
+      for_ skipAttrXmls $ \(xml, parser, result) ->
         it (" parses " ++ show xml) $ do
           parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)

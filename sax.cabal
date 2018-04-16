@@ -29,7 +29,8 @@ library
                      , mtl
                      , streaming
                      , text
-                     , xeno
+                     , tracy
+                     , xeno >= 0.3.3
   hs-source-dirs:      src
   ghc-options:         -Wall
                        -funbox-strict-fields

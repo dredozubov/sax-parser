@@ -15,12 +15,17 @@ module SAX
   , endOfOpenTag
   , bytes
   , closeTag
+  , attr
+  , anyAttr
   , skipUntil
   , withTag
   , withTagAndAttrs
+  , withAttrs
   , skipTag
+  , skipAttr
   , atTag
   , streamXml
+  , peek
   ) where
 
 
@@ -28,6 +33,7 @@ import           Control.Applicative
 import           Control.Monad.Fail
 import           Data.ByteString hiding (empty)
 import           Data.Semigroup hiding (Any)
+import           Debug.Tracy
 import           Prelude hiding (fail, concat)
 import           SAX.Streaming
 import           Streaming hiding ((<>))
@@ -121,10 +127,10 @@ parseSax (SaxParser p) s = p [] s (\_ _ -> Fail "fail handler") (\_ _ a -> Done 
 
 -- | Shows current @SaxEvent@.
 peek :: SaxParser SaxEvent
-peek = SaxParser $ \tst s fk k ->
+peek = SaxParser $ \tst s _ k ->
   case S.next s of
     Right (Right (event, _)) -> k tst s event
-    Right (Left e)           -> Fail "peek: empty sax stream"
+    Right (Left _)           -> Fail "peek: empty sax stream"
     Left _                   -> Fail "SAX stream exhausted"
 {-# INLINE peek #-}
 
@@ -136,9 +142,8 @@ safeHead (a:as) = Just (a, as)
 skip :: SaxParser ()
 skip = SaxParser $ \tst s _ k ->
   case S.next s of
-    Right (Right (e, s')) ->
-      k tst s' ()
-    _                       -> Fail "skip: stream exhausted"
+    Right (Right (_, s')) -> k tst s' ()
+    _                     -> Fail "skip: stream exhausted"
 {-# INLINE skip #-}
 
 skipAndMark :: SaxParser ()
@@ -222,8 +227,38 @@ closeTag tag = SaxParser $ \tst s fk k ->
       _           ->
                 fk tst s
     Right (Left e)            -> Fail (show e)
-    Left e                    -> Fail "SAX stream exhausted"
+    Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE closeTag #-}
+
+attr :: ByteString -> SaxParser ByteString
+attr name = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, s')) -> case event of
+      Attr nameN val -> if nameN == name then k tst s' val else fk tst s
+      _              -> fk tst s
+    Right (Left e)            -> Fail (show e)
+    Left _                    -> Fail "SAX stream exhausted"
+{-# INLINE attr #-}
+
+anyAttr :: SaxParser (ByteString, ByteString)
+anyAttr = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, s')) -> case event of
+      Attr name val -> k tst s' (name, val)
+      _              -> fk tst s
+    Right (Left e)            -> Fail (show e)
+    Left _                    -> Fail "SAX stream exhausted"
+{-# INLINE anyAttr #-}
+
+skipAttr :: SaxParser ()
+skipAttr = SaxParser $ \tst s fk k ->
+  case S.next s of
+    Right (Right (event, s')) -> case event of
+      Attr _ _ -> k tst s' ()
+      _        -> fk tst s
+    Right (Left e)            -> Fail (show e)
+    Left _                    -> Fail "SAX stream exhausted"
+{-# INLINE skipAttr #-}
 
 -- | Parses tag with its content, skipping the attributes.
 withTag :: ByteString -> SaxParser a -> SaxParser a
@@ -235,6 +270,18 @@ withTag tag s = do
   pure res
 {-# INLINE withTag #-}
 
+withAttrs
+  :: ByteString
+  -> SaxParser attrs
+  -> SaxParser attrs
+withAttrs tag sattrs = do
+  openTag tag
+  attrs <- sattrs
+  endOfOpenTag tag
+  skipUntil' (closeTag tag)
+  pure attrs
+{-# INLINE withAttrs #-}
+
 withTagAndAttrs
   :: ByteString
   -> SaxParser attrs
@@ -242,10 +289,15 @@ withTagAndAttrs
   -> SaxParser (attrs, a)
 withTagAndAttrs tag sattrs sa = do
   openTag tag
+  tracyM "opened tag"
   attrs <- sattrs
+  tracyM "parsed attrs"
   endOfOpenTag tag
+  tracyM "tag opening ended"
   res <- sa
+  tracyM "finished content parsing"
   closeTag tag
+  tracyM "tag closed"
   pure (attrs, res)
 {-# INLINE withTagAndAttrs #-}
 
