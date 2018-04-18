@@ -60,12 +60,13 @@ anyAttrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<a b=\"b\" c=\"c\"></a>", withAttrs "a" (some anyAttr), R (Done [("b","b"), ("c", "c")]))
   ]
 
-openTagXmls :: [(ByteString, SaxParser (), R ())]
-openTagXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
+namespaceXmls :: [(ByteString, SaxParser (), R ())]
+namespaceXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<test:a></a>", openTag "a", R (Fail "fail handler"))
   , ("<test:a></a>", openTag "test:a", R (Done ()))
   , ("<test:a></a>", openTag' (AnyNS "a"), R (Done ()))
   , ("<a></a>", openTag' (AnyNS "a"), R (Done ()))
+  , ("<test:a></test:a>", withTag' (AnyNS "a") (pure ()), R (Done ()))
   ]
 
 atTagXmls :: [(ByteString, SaxParser ByteString, R ByteString)]
@@ -115,6 +116,6 @@ main = hspec $ do
           parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
 
     describe "openTag" $ do
-      for_ openTagXmls $ \(xml, parser, result) ->
+      for_ namespaceXmls $ \(xml, parser, result) ->
         it (" parses " ++ show xml) $ do
           parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)

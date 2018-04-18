@@ -72,8 +72,6 @@ instance Show r => Show (Result r) where
   show (Partial _ _ _) = "Partial { <...> }"
   show (Done r) = "Done " ++ show r
 
-newtype SomeName = Name (forall name. XMLName name => name)
-
 newtype SaxParser a = SaxParser
   { runSaxParser :: forall r
     . [ByteString]
