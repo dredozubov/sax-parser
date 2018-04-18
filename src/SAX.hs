@@ -1,25 +1,37 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module SAX
   ( SaxStream
   , Result(..)
   , SaxParser(..)
+  , AnyNS(..)
   , parseSax
   , skip
   , skipAndMark
   , openTag
+  , openTag'
   , endOfOpenTag
+  , endOfOpenTag'
   , bytes
   , closeTag
+  , closeTag'
   , attr
+  , attr'
   , anyAttr
   , skipUntil
   , withTag
+  , withTag'
+  , withTags
+  , withTags'
   , withTagAndAttrs
+  , withTagAndAttrs'
   , withAttrs
   , skipTag
   , skipAttr
@@ -33,15 +45,15 @@ import           Control.Applicative
 import           Control.Monad.Fail
 import           Data.ByteString hiding (empty)
 import           Data.Semigroup hiding (Any)
+import           Data.String
+import           Data.Word
 import           Debug.Tracy
-import           Prelude hiding (fail, concat)
+import           Prelude hiding (fail, concat, span)
 import           SAX.Streaming
 import           Streaming hiding ((<>))
 import qualified Streaming.Prelude as S
 import           Xeno.Types
 
-
-type SaxStream = Stream (Of SaxEvent) (Either XenoException) ()
 
 data Result r
   = Partial (SaxEvent -> (Result r)) [ByteString] SaxStream
@@ -59,6 +71,8 @@ instance Show r => Show (Result r) where
   show (Fail s) = "Fail \"" ++ s ++ "\""
   show (Partial _ _ _) = "Partial { <...> }"
   show (Done r) = "Done " ++ show r
+
+newtype SomeName = Name (forall name. XMLName name => name)
 
 newtype SaxParser a = SaxParser
   { runSaxParser :: forall r
@@ -121,6 +135,8 @@ instance MonadFail SaxParser where
   fail s = SaxParser $ \_ _ _ _ -> Fail s
   {-# INLINE fail #-}
 
+type SaxStream = Stream (Of SaxEvent) (Either XenoException) ()
+
 parseSax :: SaxParser a -> SaxStream -> Result a
 parseSax (SaxParser p) s = p [] s (\_ _ -> Fail "fail handler") (\_ _ a -> Done a)
 {-# INLINE parseSax #-}
@@ -139,6 +155,24 @@ safeHead [] = Nothing
 safeHead (a:as) = Just (a, as)
 {-# INLINE safeHead #-}
 
+-- | Implies a name with an arbitrary XML namespace.
+newtype AnyNS = AnyNS ByteString
+  deriving (Show, Eq, Ord)
+
+class XMLName a where
+  compareNames :: a -> ByteString -> Bool
+
+instance {-# OVERLAPPABLE #-} a ~ ByteString => XMLName a where
+  compareNames = (==)
+  {-# INLINE compareNames #-}
+
+instance {-# OVERLAPPING #-} XMLName AnyNS where
+  compareNames (AnyNS bs) name = bs == snd (breakEnd (== colon) name)
+    where
+      colon :: Word8
+      colon = 58
+  {-# INLINE compareNames #-}
+
 skip :: SaxParser ()
 skip = SaxParser $ \tst s _ k ->
   case S.next s of
@@ -151,18 +185,21 @@ skipAndMark = SaxParser $ \tst s _ k ->
   case S.next s of
     Right (Right (event, s')) ->
       case event of
-        EndOfOpenTag tag ->
-          k (tag:tst) s' ()
+        EndOfOpenTag tag -> k (tag:tst) s' ()
         _                -> k tst s' ()
     _                         -> Fail "skip: stream exhausted"
 {-# INLINE skipAndMark #-}
 
 openTag :: ByteString -> SaxParser ()
-openTag tag = SaxParser $ \tst s fk k ->
+openTag = openTag'
+{-# INLINE openTag #-}
+
+openTag' :: XMLName name => name -> SaxParser ()
+openTag' tag = SaxParser $ \tst s fk k ->
   case S.next s of
     Right (Right (event, s')) ->
       case event of
-        OpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
+        OpenTag tagN -> if compareNames tag tagN then k tst s' () else fk tst s
         e            -> case safeHead tst of
           Nothing -> fk tst s
           Just (tagS,rest) -> if e == CloseTag tagS
@@ -170,7 +207,7 @@ openTag tag = SaxParser $ \tst s fk k ->
             else fk tst s
     Right (Left e)            -> Fail (show e)
     Left _                    -> Fail "SAX stream exhausted"
-{-# INLINE openTag #-}
+{-# INLINE openTag' #-}
 
 openAndMark :: SaxParser ByteString
 openAndMark = SaxParser $ \tst s fk k ->
@@ -183,12 +220,18 @@ openAndMark = SaxParser $ \tst s fk k ->
     Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE openAndMark #-}
 
-endOfOpenTag :: ByteString -> SaxParser ()
-endOfOpenTag tag = SaxParser $ \tst s fk k ->
+endOfOpenTag
+  :: ByteString
+  -> SaxParser ()
+endOfOpenTag = endOfOpenTag'
+{-# INLINE endOfOpenTag #-}
+
+endOfOpenTag' :: XMLName name => name -> SaxParser ()
+endOfOpenTag' tag = SaxParser $ \tst s fk k ->
   case S.next s of
    Right (Right (event, s')) ->
      case event of
-       EndOfOpenTag tagN -> if tagN == tag then k tst s' () else fk tst s
+       EndOfOpenTag tagN -> if compareNames tag tagN then k tst s' () else fk tst s
        e                 -> case safeHead tst of
          Nothing          -> fk tst s
          Just (tagS,rest) -> if e == CloseTag tagS
@@ -196,7 +239,7 @@ endOfOpenTag tag = SaxParser $ \tst s fk k ->
            else fk tst s
    Right (Left e)            -> Fail (show e)
    Left _                    -> Fail "SAX stream exhausted"
-{-# INLINE endOfOpenTag #-}
+{-# INLINE endOfOpenTag' #-}
 
 bytes :: SaxParser ByteString
 bytes = SaxParser $ \tst s fk k -> case S.next s of
@@ -217,28 +260,44 @@ bytes = SaxParser $ \tst s fk k -> case S.next s of
 {-# INLINE bytes #-}
 
 closeTag :: ByteString -> SaxParser ()
-closeTag tag = SaxParser $ \tst s fk k ->
+closeTag = closeTag'
+{-# INLINE closeTag #-}
+
+closeTag'
+  :: XMLName name
+  => name
+  -> SaxParser ()
+closeTag' tag = SaxParser $ \tst s fk k ->
   case S.next s of
     Right (Right (event, s')) -> case event of
       CloseTag tagN ->
-        if tagN == tag then k tst s' () else case safeHead tst of
+        if compareNames tag tagN then k tst s' () else case safeHead tst of
           Nothing          -> fk tst s
           Just (tagS,rest) -> if tagS == tagN then k rest s' () else fk tst s
       _           ->
                 fk tst s
     Right (Left e)            -> Fail (show e)
     Left _                    -> Fail "SAX stream exhausted"
-{-# INLINE closeTag #-}
+{-# INLINE closeTag'#-}
 
-attr :: ByteString -> SaxParser ByteString
-attr name = SaxParser $ \tst s fk k ->
+attr
+  :: ByteString
+  -> SaxParser ByteString
+attr = attr'
+{-# INLINE attr #-}
+
+attr'
+  :: XMLName name
+  => name
+  -> SaxParser ByteString
+attr' name = SaxParser $ \tst s fk k ->
   case S.next s of
     Right (Right (event, s')) -> case event of
-      Attr nameN val -> if nameN == name then k tst s' val else fk tst s
+      Attr nameN val -> if compareNames name nameN then k tst s' val else fk tst s
       _              -> fk tst s
     Right (Left e)            -> Fail (show e)
     Left _                    -> Fail "SAX stream exhausted"
-{-# INLINE attr #-}
+{-# INLINE attr' #-}
 
 anyAttr :: SaxParser (ByteString, ByteString)
 anyAttr = SaxParser $ \tst s fk k ->
@@ -260,46 +319,86 @@ skipAttr = SaxParser $ \tst s fk k ->
     Left _                    -> Fail "SAX stream exhausted"
 {-# INLINE skipAttr #-}
 
--- | Parses tag with its content, skipping the attributes.
-withTag :: ByteString -> SaxParser a -> SaxParser a
-withTag tag s = do
-  openTag tag
-  skipUntil' (endOfOpenTag tag)
-  res <- s
-  closeTag tag
-  pure res
+withTag
+  :: ByteString
+  -> SaxParser a
+  -> SaxParser a
+withTag = withTag'
 {-# INLINE withTag #-}
+
+-- | Parses tag with its content, skipping the attributes.
+withTag'
+  :: XMLName name
+  => name
+  -> SaxParser a
+  -> SaxParser a
+withTag' tag s = do
+  openTag' tag
+  skipUntil' (endOfOpenTag' tag)
+  res <- s
+  closeTag' tag
+  pure res
+{-# INLINE withTag' #-}
+
+withTags
+  :: [ByteString]
+  -> SaxParser a
+  -> SaxParser a
+withTags = withTags'
+{-# INLINE withTags #-}
+
+-- | Allows to nest @withTag@ parsers in a more concise way.
+withTags'
+  :: XMLName name
+  => [name]
+  -> SaxParser a
+  -> SaxParser a
+withTags' [] s = s
+withTags' (tag:tl) s = withTag' tag (withTags' tl s)
+{-# INLINE withTags' #-}
 
 withAttrs
   :: ByteString
   -> SaxParser attrs
   -> SaxParser attrs
-withAttrs tag sattrs = do
-  openTag tag
-  attrs <- sattrs
-  endOfOpenTag tag
-  skipUntil' (closeTag tag)
-  pure attrs
+withAttrs = withAttrs'
 {-# INLINE withAttrs #-}
+
+withAttrs'
+  :: XMLName name
+  => name
+  -> SaxParser attrs
+  -> SaxParser attrs
+withAttrs' tag sattrs = do
+  openTag' tag
+  attrs <- sattrs
+  endOfOpenTag' tag
+  skipUntil' (closeTag' tag)
+  pure attrs
+{-# INLINE withAttrs' #-}
 
 withTagAndAttrs
   :: ByteString
   -> SaxParser attrs
   -> SaxParser a
   -> SaxParser (attrs, a)
-withTagAndAttrs tag sattrs sa = do
-  openTag tag
-  tracyM "opened tag"
-  attrs <- sattrs
-  tracyM "parsed attrs"
-  endOfOpenTag tag
-  tracyM "tag opening ended"
-  res <- sa
-  tracyM "finished content parsing"
-  closeTag tag
-  tracyM "tag closed"
-  pure (attrs, res)
+withTagAndAttrs = withTagAndAttrs'
 {-# INLINE withTagAndAttrs #-}
+
+withTagAndAttrs'
+  :: XMLName name
+  => name
+  -> SaxParser attrs
+  -> SaxParser a
+  -> SaxParser (attrs, a)
+withTagAndAttrs' tag sattrs sa = do
+  openTag' tag
+  attrs <- sattrs
+  endOfOpenTag' tag
+  res <- sa
+  closeTag' tag
+  pure (attrs, res)
+{-# INLINE withTagAndAttrs' #-}
 
 atTag :: ByteString -> SaxParser a -> SaxParser a
 atTag tag p = do

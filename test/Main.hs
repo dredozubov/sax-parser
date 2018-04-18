@@ -31,16 +31,13 @@ helloXml = "<?xml version=\"1.1\"?><f><foo bla=\"alb\"><bar><hello><inner>Hello<
 
 helloParser :: SaxParser Hello
 helloParser = do
-  withTag "f" $ do
-    withTag "foo" $ do
-      withTag "bar" $ do
-        withTag "hello" $ do
-          hello <- withTag "inner" bytes
-          skipTag "skipMe"
-          world <- World . BS.concat <$> some (withTag "world" bytes)
-          isDom <- (withTag "is_dom" $ pure True) <|> pure False
-          ne <- many (withTag "fish" bytes)
-          pure $ Hello hello world isDom ne
+  withTags ["f", "foo", "bar", "hello"] $ do
+    hello <- withTag "inner" bytes
+    skipTag "skipMe"
+    world <- World . BS.concat <$> some (withTag "world" bytes)
+    isDom <- (withTag "is_dom" $ pure True) <|> pure False
+    ne <- many (withTag "fish" bytes)
+    pure $ Hello hello world isDom ne
 
 skipTagXmls :: [(ByteString, SaxParser ByteString)]
 skipTagXmls = fmap (\(x,p) -> ("<?xml version=\"1.1\"?>" <> x, p))
@@ -61,6 +58,14 @@ skipAttrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
 anyAttrXmls :: [(ByteString, SaxParser [(ByteString, ByteString)], R [(ByteString, ByteString)])]
 anyAttrXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<a b=\"b\" c=\"c\"></a>", withAttrs "a" (some anyAttr), R (Done [("b","b"), ("c", "c")]))
+  ]
+
+openTagXmls :: [(ByteString, SaxParser (), R ())]
+openTagXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
+  [ ("<test:a></a>", openTag "a", R (Fail "fail handler"))
+  , ("<test:a></a>", openTag "test:a", R (Done ()))
+  , ("<test:a></a>", openTag' (AnyNS "a"), R (Done ()))
+  , ("<a></a>", openTag' (AnyNS "a"), R (Done ()))
   ]
 
 atTagXmls :: [(ByteString, SaxParser ByteString, R ByteString)]
@@ -106,5 +111,10 @@ main = hspec $ do
 
     describe "skipAttr" $ do
       for_ skipAttrXmls $ \(xml, parser, result) ->
+        it (" parses " ++ show xml) $ do
+          parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
+
+    describe "openTag" $ do
+      for_ openTagXmls $ \(xml, parser, result) ->
         it (" parses " ++ show xml) $ do
           parseSax parser (streamXml xml) `shouldSatisfy` ((==result) . R)
