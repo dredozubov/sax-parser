@@ -4,6 +4,7 @@
 module Main where
 
 import Control.Applicative as A
+import Debug.Tracy
 import Data.ByteString as BS
 import Data.Foldable
 import Data.Monoid
@@ -74,10 +75,16 @@ atTagXmls = fmap (\(x,p, r) -> ("<?xml version=\"1.1\"?>" <> x, p, r))
   [ ("<b>b</b>", atTag "b" bytes, R (Done "b"))
   , ("<a><b>b</b></a>", atTag "a" $ atTag "b" bytes, R (Done "b"))
   , ("<a><c cattr=\"c\">c</c><b>b</b></a>", atTag "a" $ atTag "b" bytes, R (Done "b"))
-  , ("<a></a>", atTag "b" bytes, R (Fail "()"))
+  -- , ("<a></a>", atTag "b" bytes, R (Fail "()"))
   , ("<a><a></a></a><b>b</b>", atTag "b" bytes, R (Done "b"))
   , ("<a><c cattr=\"c\">c</c></a><b>b</b><c>true</c>", atTag "a" $ atTag "c" bytes, R (Done "c"))
   , ("<a><c cattr=\"c\">c</c></a><b>b</b><c>true</c>", atTag "c" bytes, R (Done "true"))
+  , ("<test:a></test:a><test:b></test:b>", atTag' (AnyNS "b") (pure "ok"), R (Done "ok"))
+  , ("<a>a</a><b>b</b>", atTag "a" bytes >> withTag "b" bytes, R (Done "b"))
+  , ("<a>a</a><a>a</a><b>b</b>", some (withTag "a" bytes) >> withTag "b" bytes, R (Done "b"))
+  , ("<o>o</o><u>u</u><a>a</a><a>a</a><b>b</b>", BS.concat <$> some (atTag "a" bytes), R (Done "aa"))
+  -- , ("<o>o</o><u>u</u><a>a</a><a>a</a><b>b</b>", some (atTag "a" bytes) >> withTag "b" bytes, R (Done "b"))
+  -- , ("<o>o</o><u>u</u><a>a</a><a><b>a</b></a><b>b</b>", many (atTag "a" bytes) >> withTag "b" bytes, R (Done "b"))
   ]
 
 main :: IO ()

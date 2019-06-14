@@ -4,6 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -34,8 +35,10 @@ module SAX
   , withTagAndAttrs'
   , withAttrs
   , skipTag
+  , skipTag'
   , skipAttr
   , atTag
+  , atTag'
   , streamXml
   , peek
   ) where
@@ -148,6 +151,9 @@ peek = SaxParser $ \tst s _ k ->
     Left _                   -> Fail "SAX stream exhausted"
 {-# INLINE peek #-}
 
+peekSkiplist :: SaxParser [ByteString]
+peekSkiplist = SaxParser $ \tst s _ k -> k tst s tst
+
 safeHead :: [a] -> Maybe (a, [a])
 safeHead [] = Nothing
 safeHead (a:as) = Just (a, as)
@@ -157,7 +163,7 @@ safeHead (a:as) = Just (a, as)
 newtype AnyNS = AnyNS ByteString
   deriving (Show, Eq, Ord)
 
-class XMLName a where
+class Show a => XMLName a where
   compareNames :: a -> ByteString -> Bool
 
 instance {-# OVERLAPPABLE #-} a ~ ByteString => XMLName a where
@@ -183,8 +189,8 @@ skipAndMark = SaxParser $ \tst s _ k ->
   case S.next s of
     Right (Right (event, s')) ->
       case event of
-        EndOfOpenTag tag -> k (tag:tst) s' ()
-        _                -> k tst s' ()
+        OpenTag tag -> k (tag:tst) s' ()
+        _           -> k tst s' ()
     _                         -> Fail "skip: stream exhausted"
 {-# INLINE skipAndMark #-}
 
@@ -267,11 +273,20 @@ closeTag'
   -> SaxParser ()
 closeTag' tag = SaxParser $ \tst s fk k ->
   case S.next s of
-    Right (Right (event, s')) -> case event of
+    Right (Right (event, s')) -> tracy ("CloseTag event: "++ show event) $ case event of
       CloseTag tagN ->
-        if compareNames tag tagN then k tst s' () else case safeHead tst of
-          Nothing          -> fk tst s
-          Just (tagS,rest) -> if tagS == tagN then k rest s' () else fk tst s
+        case safeHead tst of
+          Nothing          -> tracy "safeHead - Nothing" $
+            if let x = compareNames tag tagN in tracy (show x) x
+            then k tst s' ()
+            else fk tst s
+          Just (tagS,rest) -> tracy ("safeHead - Just "++show tagS) $
+            if let x = compareNames tagS tagN in tracy (show x) x
+            then tracy ("tst: "++ show (s', rest)) $ k rest s' ()
+            else if compareNames tag tagN then k tst s' () else fk tst s
+        -- if compareNames tag tagN then k tst s' () else case safeHead tst of
+        --   Nothing          -> fk tst s
+        --   Just (tagS,rest) -> if tagS == tagN then k rest s' () else fk tst s
       _           ->
                 fk tst s
     Right (Left e)            -> Fail (show e)
@@ -331,10 +346,15 @@ withTag'
   -> SaxParser a
   -> SaxParser a
 withTag' tag s = do
+  tracyM $ "==== withTag " ++ show tag ++ " ===="
   openTag' tag
+  tracyM $ "==== withTag opened " ++ show tag ++ " ===="
   skipUntil' (endOfOpenTag' tag)
+  tracyM $ "==== withTag skipped " ++ show tag ++ " ===="
   res <- s
+  tracyM $ "==== withTag parsed " ++ show tag ++ " ===="
   closeTag' tag
+  tracyM $ "==== withTag closed " ++ show tag ++ " ===="
   pure res
 {-# INLINE withTag' #-}
 
@@ -398,22 +418,43 @@ withTagAndAttrs' tag sattrs sa = do
   pure (attrs, res)
 {-# INLINE withTagAndAttrs' #-}
 
-atTag :: ByteString -> SaxParser a -> SaxParser a
-atTag tag p = do
-  withTag tag p <|> (do
-    t <- openAndMark
-    skipUntil' (closeTag t)
-    atTag tag p
-    )
+atTag
+  :: ByteString
+  -> SaxParser a
+  -> SaxParser a
+atTag = atTag'
 {-# INLINE atTag #-}
+
+atTag'
+  :: XMLName name
+  => name
+  -> SaxParser a
+  -> SaxParser a
+atTag' tag p = do
+  tracyM "entered atTag'"
+  withTag' tag p <|> (do
+    tracyM ("atTag': ")
+    t <- openAndMark
+    tracyM ("atTag' opened and marked ")
+    skipUntil (closeTag' t)
+    tracyM ("atTag' skipped: ")
+    atTag' tag p
+    )
+{-# INLINE atTag' #-}
 
 -- | Skips a tag and all of its children.
 skipTag :: ByteString -> SaxParser ()
-skipTag tag = do
-  openTag tag
-  skipUntil' (closeTag tag)
+skipTag = skipTag'
+
+skipTag'
+  :: XMLName name
+  => name
+  -> SaxParser ()
+skipTag' tag = do
+  openTag' tag
+  skipUntil' (closeTag' tag)
   pure ()
-{-# INLINE skipTag #-}
+{-# INLINE skipTag' #-}
 
 skipUntil :: SaxParser a -> SaxParser a
 skipUntil s = s <|> (skipAndMark >> skipUntil s)
